@@ -116,7 +116,7 @@
 
 ## iOS framework linkage (`use_frameworks!`)
 
-This SDK's native iOS dependencies — Auth0 3.0.1, JWTDecode 4.0.0, and SimpleKeychain 1.3.0 — are Swift pods. They install with the default React Native static-library linkage, so **most apps need no extra Podfile changes**:
+This SDK's native iOS dependencies — Auth0 3.2.0, JWTDecode 4.0.0, and SimpleKeychain 1.3.0 — are Swift pods. They install with the default React Native static-library linkage, so **most apps need no extra Podfile changes**:
 
 ```bash
 cd ios && pod install
@@ -1434,7 +1434,7 @@ function PasskeySignupScreen() {
 
 When your database connection requires the user's email address or phone number to be verified, Auth0 sends a one-time code (OTP) to each identifier that needs verification when you request the signup challenge. The user has to enter those codes before the signup can complete.
 
-> **Native only (iOS, Android).** `@auth0/auth0-spa-js` does not support identifier verification, so on web `deliveryMethod` and `verification` reject with a `PasskeyError` of type `PASSKEY_UNSUPPORTED_PLATFORM`.
+> **iOS, Android and web.** The WebAuthn ceremony is the only difference: on native, `authResponse` is the JSON string from your credential manager; on web it is the `PublicKeyCredential` from `navigator.credentials.create()` (see [Signup with Passkey (Web)](#signup-with-passkey-web)).
 
 The flow is the regular [signup](#signup-with-passkey) with two additions:
 
@@ -1445,12 +1445,12 @@ The flow is the regular [signup](#signup-with-passkey) with two additions:
 
 **Collect the codes before you create the passkey.** If you create the credential first and the verification then fails, the user is left with an orphaned passkey and is prompted a second time on retry.
 
-If a code is wrong or missing, `getTokenByPasskey` rejects with a `PasskeyError` of type `PASSKEY_VERIFICATION_RETRYABLE`, and the signup can be retried without starting over:
+If a code is wrong, `getTokenByPasskey` rejects with a `PasskeyError` of type `PASSKEY_VERIFICATION_RETRYABLE`, and the signup can be retried without starting over:
 
 - Call `error.getVerificationRetryPayload()` to get the identifiers to ask the user again (`verificationRequired`) and the session to retry with (`authSession`). When a field is `undefined`, use the one from the original challenge.
 - Call `getTokenByPasskey` again with the **same** `authResponse`, so the user is not asked to create the passkey a second time.
 
-Any other failure (the attempts are used up, the session expired, ...) is a regular `PASSKEY_EXCHANGE_FAILED` error: start over from `passkeySignupChallenge`. Cap the number of retries in your app.
+Any other failure (the attempts are used up, the session expired, a code left empty, ...) is a regular `PASSKEY_EXCHANGE_FAILED` error: start over from `passkeySignupChallenge`. Cap the number of retries in your app.
 
 ```tsx
 import {
@@ -1506,7 +1506,7 @@ function PasskeySignupWithVerificationScreen() {
               : null;
           if (!retry || attempt >= MAX_ATTEMPTS) throw error; // not retryable: restart the signup
 
-          // A code was wrong or missing. Ask again for the listed identifiers and keep the other codes.
+          // A code was wrong. Ask again for the listed identifiers and keep the other codes.
           authSession = retry.authSession ?? authSession;
           verification = {
             ...verification,
@@ -1577,6 +1577,8 @@ function PasskeySigninScreen() {
 ### Signup with Passkey (Web)
 
 Web uses the **exact same `passkeySignupChallenge` / `passkeyLoginChallenge` / `getTokenByPasskey` functions as native** — no web-specific methods were added. Only step 2 (the WebAuthn ceremony) differs: the app calls the browser's built-in [WebAuthn API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Authentication_API) — `navigator.credentials.create()` for signup and `navigator.credentials.get()` for login — instead of a native module or third-party library. Unlike native, `authResponse` on web accepts the raw `PublicKeyCredential` object returned directly by `navigator.credentials` — no manual serialization needed. (See [Auth Response Format](#passkeys-auth-response-format) for the native, JSON-string form.)
+
+> **Identifier verification** works on web too. Collect the one-time codes _before_ calling `navigator.credentials.create()`, then pass them as `verification` to `getTokenByPasskey` together with the `PublicKeyCredential`. See [Signup with Passkey and Identifier Verification](#signup-with-passkey-identifier-verification): the flow is the same, with the `PublicKeyCredential` as `authResponse`.
 
 ```tsx
 import { useAuth0, PasskeyError } from 'react-native-auth0';
@@ -1761,20 +1763,20 @@ const loginCredentials = await auth0.getTokenByPasskey({
 
 The `passkeySignupChallenge` method accepts the following parameters to create a user profile along with the passkey. At least one of `email`, `phoneNumber`, or `username` is required — which of these your database connection actually accepts depends on its configuration (e.g. **Flexible Identifiers**). The SDK does not validate this client-side; an unsupported or missing identifier is rejected by the Auth0 API and surfaces as a `PASSKEY_CHALLENGE_FAILED` error.
 
-| Parameter        | Type                      | Description                                                                                                               |
-| ---------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `email`          | `string?`                 | User's email address                                                                                                      |
-| `phoneNumber`    | `string?`                 | User's phone number                                                                                                       |
-| `username`       | `string?`                 | Username                                                                                                                  |
-| `name`           | `string?`                 | Full name                                                                                                                 |
-| `givenName`      | `string?`                 | First/given name                                                                                                          |
-| `familyName`     | `string?`                 | Last/family name                                                                                                          |
-| `nickname`       | `string?`                 | Nickname                                                                                                                  |
-| `picture`        | `string?`                 | Profile picture URL                                                                                                       |
-| `userMetadata`   | `Record<string, string>?` | Custom user metadata key-value pairs                                                                                      |
-| `realm`          | `string?`                 | Database connection name                                                                                                  |
-| `organization`   | `string?`                 | Auth0 organization ID                                                                                                     |
-| `deliveryMethod` | `'text' \| 'voice'`?      | How to deliver the code when a phone number must be [verified](#signup-with-passkey-identifier-verification). Native only |
+| Parameter        | Type                      | Description                                                                                                  |
+| ---------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `email`          | `string?`                 | User's email address                                                                                         |
+| `phoneNumber`    | `string?`                 | User's phone number                                                                                          |
+| `username`       | `string?`                 | Username                                                                                                     |
+| `name`           | `string?`                 | Full name                                                                                                    |
+| `givenName`      | `string?`                 | First/given name                                                                                             |
+| `familyName`     | `string?`                 | Last/family name                                                                                             |
+| `nickname`       | `string?`                 | Nickname                                                                                                     |
+| `picture`        | `string?`                 | Profile picture URL                                                                                          |
+| `userMetadata`   | `Record<string, string>?` | Custom user metadata key-value pairs                                                                         |
+| `realm`          | `string?`                 | Database connection name                                                                                     |
+| `organization`   | `string?`                 | Auth0 organization ID                                                                                        |
+| `deliveryMethod` | `'text' \| 'voice'`?      | How to deliver the code when a phone number must be [verified](#signup-with-passkey-identifier-verification) |
 
 <a name="passkeys-error-handling"></a>
 
@@ -1782,17 +1784,17 @@ The `passkeySignupChallenge` method accepts the following parameters to create a
 
 Passkey operations throw `PasskeyError` (extends `AuthError`) with a normalized `type` property. Use `PasskeyErrorCodes` for type-safe error handling:
 
-| Error Code                       | Description                                                                                                                                                                                                                                                                       |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `PASSKEY_CHALLENGE_FAILED`       | Auth0 challenge request failed                                                                                                                                                                                                                                                    |
-| `PASSKEY_EXCHANGE_FAILED`        | Token exchange with credential response failed                                                                                                                                                                                                                                    |
-| `PASSKEY_NOT_AVAILABLE`          | Passkeys not available on this device/OS version, or WebAuthn is not supported in this browser                                                                                                                                                                                    |
-| `PASSKEY_UNSUPPORTED_PLATFORM`   | Passkeys not supported on this platform, or an option that is [native only](#signup-with-passkey-identifier-verification) (`deliveryMethod`, `verification`) was used on web                                                                                                      |
-| `PASSKEY_INVALID_PARAMETER`      | **Native only.** `authResponse` passed to `getTokenByPasskey` was not a JSON string                                                                                                                                                                                               |
-| `PASSKEY_INVALID_CREDENTIAL`     | **Web only.** The credential passed to `getTokenByPasskey` is neither a valid attestation (signup) nor assertion (login) response                                                                                                                                                 |
-| `PASSKEY_VERIFICATION_RETRYABLE` | **Native only.** A one-time code for [identifier verification](#signup-with-passkey-identifier-verification) was wrong or missing and the signup can be retried — use `error.getVerificationRetryPayload()` to get the identifiers to ask for again and the session to retry with |
-| `PASSKEY_MFA_REQUIRED`           | **Web only.** MFA is required to complete the exchange — use `error.getMfaRequiredPayload()` to extract `mfaToken` and `mfaRequirements`, then continue with `mfa.challenge()`/`mfa.verify()`                                                                                     |
-| `PASSKEY_UNKNOWN_ERROR`          | Unknown or uncategorized passkey error — check `error.message` for the underlying description                                                                                                                                                                                     |
+| Error Code                       | Description                                                                                                                                                                                                                                           |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PASSKEY_CHALLENGE_FAILED`       | Auth0 challenge request failed                                                                                                                                                                                                                        |
+| `PASSKEY_EXCHANGE_FAILED`        | Token exchange with credential response failed                                                                                                                                                                                                        |
+| `PASSKEY_NOT_AVAILABLE`          | Passkeys not available on this device/OS version, or WebAuthn is not supported in this browser                                                                                                                                                        |
+| `PASSKEY_UNSUPPORTED_PLATFORM`   | Passkeys not supported on this platform                                                                                                                                                                                                               |
+| `PASSKEY_INVALID_PARAMETER`      | `authResponse` passed to `getTokenByPasskey` has the wrong type for the platform (a JSON string on web, a non-string on native), or a code in `verification` was empty (web)                                                                          |
+| `PASSKEY_INVALID_CREDENTIAL`     | **Web only.** The credential passed to `getTokenByPasskey` is neither a valid attestation (signup) nor assertion (login) response                                                                                                                     |
+| `PASSKEY_VERIFICATION_RETRYABLE` | A one-time code for [identifier verification](#signup-with-passkey-identifier-verification) was wrong and the signup can be retried — use `error.getVerificationRetryPayload()` to get the identifiers to ask for again and the session to retry with |
+| `PASSKEY_MFA_REQUIRED`           | **Web only.** MFA is required to complete the exchange — use `error.getMfaRequiredPayload()` to extract `mfaToken` and `mfaRequirements`, then continue with `mfa.challenge()`/`mfa.verify()`                                                         |
+| `PASSKEY_UNKNOWN_ERROR`          | Unknown or uncategorized passkey error — check `error.message` for the underlying description                                                                                                                                                         |
 
 ```typescript
 import { PasskeyError, PasskeyErrorCodes } from 'react-native-auth0';

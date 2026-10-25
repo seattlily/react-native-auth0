@@ -526,9 +526,6 @@ export interface PasskeySignupChallengeParameters {
    *
    * Only used when the connection requires identifier verification. See
    * {@link PasskeyChallengeResponse.verificationRequired}.
-   *
-   * @remarks Native only (iOS, Android). Not supported on web: passing it
-   * rejects with a `PasskeyError` of type `PASSKEY_UNSUPPORTED_PLATFORM`.
    */
   deliveryMethod?: PasswordlessDeliveryMethod;
 }
@@ -566,8 +563,6 @@ export interface PasskeyChallengeResponse {
    * identifier. Collect the codes **before** creating the passkey credential,
    * then pass them as `verification` to `getTokenByPasskey`. Identifiers this
    * SDK does not recognize are left out.
-   *
-   * @remarks Native only (iOS, Android). Always `undefined` on web.
    */
   verificationRequired?: PasskeyVerificationMethod[];
 }
@@ -581,18 +576,20 @@ export interface PasskeyChallengeResponse {
 export type PasskeyVerificationMethod = 'email' | 'phone';
 
 /**
- * What to retry a passkey signup exchange with after a one-time code was wrong
- * or missing. Returned by `PasskeyError.getVerificationRetryPayload()`.
+ * What to retry a passkey signup exchange with after a one-time code was
+ * wrong. Returned by `PasskeyError.getVerificationRetryPayload()`.
  */
 export interface PasskeyVerificationRetryPayload {
   /**
-   * The auth session to retry with. When `undefined`, keep using the session
-   * from the original challenge.
+   * The auth session to retry with: the same, still valid session Auth0
+   * returned with the error. Always set on a retryable error; if it is ever
+   * absent, keep using the session from the original challenge.
    */
   authSession?: string;
   /**
    * The identifiers whose codes must be collected again. When `undefined`,
-   * collect the codes for the identifiers of the original challenge.
+   * Auth0 did not say which failed: collect the codes for the identifiers of
+   * the original challenge.
    */
   verificationRequired?: PasskeyVerificationMethod[];
 }
@@ -635,15 +632,14 @@ export interface GetTokenByPasskeyParameters {
    * sent to. Provide a code for every identifier listed in
    * {@link PasskeyChallengeResponse.verificationRequired}.
    *
-   * If a code is wrong or missing, the call rejects with a `PasskeyError` of
-   * type `PASSKEY_VERIFICATION_RETRYABLE`. Collect the codes again and call
+   * If a code is wrong, the call rejects with a `PasskeyError` of type
+   * `PASSKEY_VERIFICATION_RETRYABLE`. Collect the codes again and call
    * `getTokenByPasskey` again with the **same** `authResponse`, so the user is
-   * not asked to create the passkey a second time.
+   * not asked to create the passkey a second time. A missing or empty code is
+   * not retryable: make sure the user entered every code first. On web, an
+   * empty code rejects with `PASSKEY_INVALID_PARAMETER` before anything is sent.
    *
    * Only used when completing a passkey signup.
-   *
-   * @remarks Native only (iOS, Android). Not supported on web: passing it
-   * rejects with a `PasskeyError` of type `PASSKEY_UNSUPPORTED_PLATFORM`.
    */
   verification?: Partial<Record<PasskeyVerificationMethod, string>>;
 }

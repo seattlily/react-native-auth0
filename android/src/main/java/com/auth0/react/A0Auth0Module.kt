@@ -918,7 +918,7 @@ class A0Auth0Module(private val reactContext: ReactApplicationContext) : A0Auth0
 
             override fun onFailure(error: AuthenticationException) {
                 if (error.isPasskeyVerificationRetryable) {
-                    // A code was wrong or missing and the session is still usable: hand JS what a retry needs.
+                    // A code was wrong and the session is still usable: hand JS what a retry needs.
                     val userInfo = WritableNativeMap().apply {
                         error.passkeyAuthSession?.let { putString("authSession", it) }
                         val verificationRequired = verificationMethodNames(error.passkeyVerificationRequired)

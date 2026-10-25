@@ -82,7 +82,12 @@ describe('PasskeyError', () => {
       [
         'PASSKEY_VERIFICATION_RETRYABLE',
         'PASSKEY_VERIFICATION_RETRYABLE',
-        'native: a verification code was wrong or missing and the signup can be retried',
+        'native: a verification code was wrong and the signup can be retried',
+      ],
+      [
+        'missing_verification_code',
+        'PASSKEY_INVALID_PARAMETER',
+        'spa-js: an OTP code in verification was empty; nothing was sent',
       ],
       [
         'InvalidParameter',
@@ -362,8 +367,9 @@ describe('PasskeyError', () => {
     });
 
     it('should leave out what the native error does not carry', () => {
-      // A missing code is reported without a session or identifier list: the
-      // caller keeps the original challenge's session and identifiers.
+      // Auth0 does not always list the identifiers to ask again, and the bridge
+      // forwards only what it received: the caller falls back to the original
+      // challenge's session and identifiers.
       expect(retryable({}).getVerificationRetryPayload()).toEqual({
         authSession: undefined,
         verificationRequired: undefined,
@@ -395,6 +401,46 @@ describe('PasskeyError', () => {
       );
 
       expect(error.getVerificationRetryPayload()).toBeNull();
+    });
+
+    describe('on web', () => {
+      // `WebAuth0Client` keeps the `cause` of the auth0-spa-js PasskeyGetTokenError
+      // (the API error response) on `json`, or the error itself when it has none.
+      const webRetryable = (json: unknown) =>
+        new PasskeyError(
+          new AuthError(
+            'PASSKEY_VERIFICATION_RETRYABLE',
+            'Invalid or expired session',
+            { code: 'PASSKEY_VERIFICATION_RETRYABLE', json }
+          )
+        );
+
+      it('should read the wire-format fields of the API error response', () => {
+        const error = webRetryable({
+          error: 'invalid_grant',
+          error_description: 'Invalid or expired session',
+          auth_session: 'session-2',
+          verification_required: ['phone'],
+        });
+
+        expect(error.type).toBe(PasskeyErrorCodes.VERIFICATION_RETRYABLE);
+        expect(error.getVerificationRetryPayload()).toEqual({
+          authSession: 'session-2',
+          verificationRequired: ['phone'],
+        });
+      });
+
+      it('should read the camelCase fields of the spa-js error itself', () => {
+        const error = webRetryable({
+          authSession: 'session-3',
+          verificationRequired: ['email', 'phone'],
+        });
+
+        expect(error.getVerificationRetryPayload()).toEqual({
+          authSession: 'session-3',
+          verificationRequired: ['email', 'phone'],
+        });
+      });
     });
   });
 });

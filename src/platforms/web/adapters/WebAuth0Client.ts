@@ -29,26 +29,16 @@ import { ssoExchangeNotSupported } from './WebAuthenticationProvider';
 import { AuthenticationOrchestrator } from '../../../core/services';
 import { HttpClient } from '../../../core/services/HttpClient';
 import { TokenType } from '../../../types/common';
-import { AuthError, DPoPError, PasskeyError } from '../../../core/models';
+import {
+  AuthError,
+  DPoPError,
+  PasskeyError,
+  PasskeyErrorCodes,
+} from '../../../core/models';
 import {
   validateActorTokenParameters,
   validateTokenTypeUri,
 } from '../../../core/utils';
-
-/**
- * auth0-spa-js can neither choose the OTP delivery channel nor send identifier
- * verification codes for a passkey signup. Rejecting beats dropping the option:
- * the code would go out over a channel the caller did not choose, or the
- * exchange would fail server-side with a confusing "missing verification" error.
- */
-const unsupportedPasskeyOption = (option: string) =>
-  new PasskeyError(
-    new AuthError(
-      'UnsupportedOperation',
-      `\`${option}\` is only supported on native platforms (iOS/Android). It is not available on the web platform.`,
-      { code: 'UnsupportedOperation' }
-    )
-  );
 
 export class WebAuth0Client implements Auth0Client {
   readonly webAuth: WebWebAuthProvider;
@@ -274,10 +264,6 @@ export class WebAuth0Client implements Auth0Client {
         deliveryMethod,
       } = parameters;
 
-      if (deliveryMethod) {
-        throw unsupportedPasskeyOption('deliveryMethod');
-      }
-
       // auth0-spa-js's PasskeySignupChallengeOptions type requires at
       // least one of email/phoneNumber/username, but which identifiers
       // are actually accepted depends on the database connection's
@@ -297,6 +283,7 @@ export class WebAuth0Client implements Auth0Client {
         userMetadata,
         realm,
         organization,
+        deliveryMethod,
       } as Parameters<typeof this.client.passkey.getSignupChallenge>[0]);
 
       return {
@@ -305,6 +292,10 @@ export class WebAuth0Client implements Auth0Client {
           string,
           any
         >,
+        // Left out when no verification is needed, like on native.
+        ...(challenge.verificationRequired?.length && {
+          verificationRequired: challenge.verificationRequired,
+        }),
       };
     } catch (e: any) {
       if (e instanceof PasskeyError) throw e;
@@ -369,9 +360,12 @@ export class WebAuth0Client implements Auth0Client {
         verification,
       } = parameters;
 
-      if (verification && Object.keys(verification).length > 0) {
-        throw unsupportedPasskeyOption('verification');
-      }
+      // auth0-spa-js only accepts string codes (and rejects an empty one itself).
+      const codes = Object.fromEntries(
+        Object.entries(verification ?? {}).filter(
+          (entry): entry is [string, string] => typeof entry[1] === 'string'
+        )
+      );
 
       // Apply default scope if not provided, for consistency with native
       // platforms (which default to "openid profile email" when omitted).
@@ -397,6 +391,7 @@ export class WebAuth0Client implements Auth0Client {
         audience,
         scope: finalScope,
         organization,
+        verification: Object.keys(codes).length > 0 ? codes : undefined,
       });
 
       const expiresAt = Math.floor(Date.now() / 1000) + response.expires_in;
@@ -417,7 +412,14 @@ export class WebAuth0Client implements Auth0Client {
       // bare Error from ID token verification — none of these set `.code`,
       // only `.error` (OAuth2-style), so check both before falling back to
       // a generic code. See PasskeyErrorCodes for the resulting mapping.
-      const code = e.code ?? e.error ?? 'passkey_exchange_failed';
+      //
+      // The exception is a wrong identifier-verification code while the session
+      // is still alive: spa-js flags that on a PasskeyGetTokenError
+      // (`isRetryable`), and the API error response (`auth_session`,
+      // `verification_required`) is its `cause`.
+      const code = e.isRetryable
+        ? PasskeyErrorCodes.VERIFICATION_RETRYABLE
+        : (e.code ?? e.error ?? 'passkey_exchange_failed');
       const authError = new AuthError(
         code,
         e.message ??

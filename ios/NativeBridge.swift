@@ -648,7 +648,7 @@ public class NativeBridge: NSObject {
                 case .success(let credentials):
                     resolve(credentials.asDictionary())
                 case .failure(let error):
-                    if error.isPasskeyVerificationCodeInvalid || error.isPasskeyVerificationCodeMissing {
+                    if error.isPasskeyVerificationRetryable {
                         reject(NativeBridge.passkeyVerificationRetryableErrorCode,
                                error.localizedDescription,
                                NativeBridge.passkeyVerificationRetryableError(from: error))
